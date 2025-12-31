@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>おこづかい計画</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="bg"></div>
+
+  <main class="app">
+    <header class="topbar">
+      <div class="title">
+        <div class="appname">おこづかい計画</div>
+        <div class="sub" id="editLabel">今日：—（編集中：—）</div>
+      </div>
+
+      <div class="topActions">
+        <button class="iconbtn" id="openSettings" title="設定">⚙️</button>
+        <button class="iconbtn" id="goToday">今日に戻す</button>
+      </div>
+    </header>
+
+    <section class="card big">
+      <div class="label">通算の貯金</div>
+      <div class="total" id="totalMoney">¥ —</div>
+      <div class="metaRow">
+        <div class="metaItem">
+          <div class="metaLabel">今月の増減</div>
+          <div class="metaValue" id="monthDelta">—</div>
+        </div>
+        <div class="metaItem">
+          <div class="metaLabel">今日の入力状況</div>
+          <div class="metaValue" id="todayStatus">—</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="sectionTitle">自炊記録を登録</div>
+
+      <label class="field">
+        <span>日付を選ぶ</span>
+        <input type="date" id="pickDate" />
+      </label>
+
+      <div class="divider"></div>
+
+      <div class="sectionTitle">昼 / 夜 を登録（編集中の日付に保存）</div>
+
+      <div class="row">
+        <div class="pill">
+          <div class="pillHead">
+            <div class="pillLabel">🍱 昼</div>
+            <div class="mini">自炊ボーナス</div>
+          </div>
+
+          <label class="inlineInput">
+            <span>¥</span>
+            <input type="number" id="lunchBonusInput" min="0" step="100" />
+          </label>
+
+          <div class="seg">
+            <button class="segbtn" id="lunchHome">自炊</button>
+            <button class="segbtn" id="lunchOut">外食</button>
+          </div>
+        </div>
+
+        <div class="pill">
+          <div class="pillHead">
+            <div class="pillLabel">🍲 夜</div>
+            <div class="mini">自炊ボーナス</div>
+          </div>
+
+          <label class="inlineInput">
+            <span>¥</span>
+            <input type="number" id="dinnerBonusInput" min="0" step="100" />
+          </label>
+
+          <div class="seg">
+            <button class="segbtn" id="dinnerHome">自炊</button>
+            <button class="segbtn" id="dinnerOut">外食</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="hint">※トグル・カレンダーは即反映／通信失敗時だけ元に戻します</div>
+    </section>
+
+    <section class="card">
+      <div class="sectionTitle">貯金推移</div>
+      <div class="row2">
+        <button class="ghost small" data-range="30">30日</button>
+        <button class="ghost small" data-range="90">90日</button>
+        <button class="ghost small" data-range="365">1年</button>
+        <button class="ghost small" data-range="0">全期間</button>
+      </div>
+      <canvas id="trend" height="180"></canvas>
+      <div class="hint">※通算貯金の推移（マネーフォワードみたいなやつ）</div>
+    </section>
+
+    <section class="card">
+      <div class="sectionTitle">カレンダー（月）</div>
+      <div class="calHeader">
+        <button class="ghost small" id="prevMonth">←</button>
+        <div class="calTitle" id="calTitle">—</div>
+        <button class="ghost small" id="nextMonth">→</button>
+      </div>
+
+      <div class="weekday">
+        <div>日</div><div>月</div><div>火</div><div>水</div><div>木</div><div>金</div><div>土</div>
+      </div>
+
+      <div class="calGrid" id="calendar"></div>
+      <div class="hint">セルをタップするとその日を編集できます（中央の数字が日別合計）</div>
+    </section>
+  </main>
+
+  <!-- Settings Modal -->
+  <div class="modalOverlay" id="settingsOverlay" hidden></div>
+  <div class="modal" id="settingsModal" hidden>
+    <div class="modalHeader">
+      <div class="modalTitle">設定</div>
+      <button class="iconbtn" id="closeSettings" title="閉じる">✕</button>
+    </div>
+
+    <div class="modalBody">
+      <div class="modalHint">PINは夫婦だけで共有するための軽い鍵です（保存はこの端末のブラウザ内）。</div>
+
+      <label class="field">
+        <span>PIN（現在）</span>
+        <input type="password" id="pinInput" placeholder="未設定なら空でもOK" />
+      </label>
+
+      <label class="field">
+        <span>PIN（変更する場合）</span>
+        <input type="password" id="newPinInput" placeholder="変更しないなら空のまま" />
+      </label>
+
+      <div class="row2">
+        <button class="ghost" id="saveSettings">設定を保存</button>
+        <button class="ghost" id="resetPinLocal">この端末のPINを忘れる</button>
+      </div>
+
+      <div class="hint" id="settingsStatus"></div>
+    </div>
+  </div>
+
+  <script src="app.js?v=7"></script>
+</body>
+</html>
