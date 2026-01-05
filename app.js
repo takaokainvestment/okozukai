@@ -66,15 +66,22 @@ async function apiGet(path, params={}){
   return res.json();
 }
 
-async function apiSetMeal({date, meal, mode, amount}){
+async function apiSetMeal({date, meal, mode, amount}) {
   const url = new URL(GAS_WEBAPP_URL);
   url.searchParams.set("path", "setMeal");
   url.searchParams.set("pin", PIN);
   url.searchParams.set("date", date);
-  url.searchParams.set("meal", meal); // lunch/dinner
-  url.searchParams.set("mode", mode); // home/out
-  if (amount !== undefined && amount !== null) url.searchParams.set("amount", String(amount));
-  const res = await fetch(url.toString(), { method:"GET" });
+  url.searchParams.set("meal", meal); // lunch / dinner
+  url.searchParams.set("mode", mode); // home / out
+
+  if (amount !== undefined && amount !== null) {
+    url.searchParams.set("amount", String(amount));
+  }
+
+  // ★ 追加：軽量モード
+  url.searchParams.set("lite", "1");
+
+  const res = await fetch(url.toString(), { method: "GET" });
   return res.json();
 }
 
@@ -366,53 +373,74 @@ function drawTrend_(series){
 }
 
 // ===== save (fast) =====
-async function setMeal_(meal, mode){
-  // UI即反映
-  setActiveBtn_(meal, mode);
+const inFlight = new Set(); // グローバルに1回
 
-  // disable while request
-  lunchHome.disabled = lunchOut.disabled = dinnerHome.disabled = dinnerOut.disabled = true;
+async function setMeal_(meal, mode){
+  // UIは先に即反映
+  setActiveBtn_(meal, mode);
+  optimisticApply_(meal, mode); // 後述：カレンダー数字も即反映
+
+  const key = `${editingDate}:${meal}`;
+  if (inFlight.has(key)) return;     // 連打は無視（ここが最重要）
+  inFlight.add(key);
 
   try{
-    // amount: home only
-    let amount = null;
-    if (mode === "home"){
-      if (meal === "lunch" && lunchBonusInput) amount = clamp100(lunchBonusInput.value);
-      if (meal === "dinner" && dinnerBonusInput) amount = clamp100(dinnerBonusInput.value);
-    }
+    // fetch は裏で。待ち時間はUI止めない
+    const amount = (mode==="home")
+      ? (meal==="lunch" ? clamp100(lunchBonusInput.value) : clamp100(dinnerBonusInput.value))
+      : 0;
 
     const res = await apiSetMeal({ date: editingDate, meal, mode, amount });
-    if (!res.ok) {
-      // 通信失敗時だけ“戻す”（カレンダーの状態で再適用）
-      const st = calData[editingDate];
-      if (st){
-        setActiveBtn_("lunch", (st.lunch !== null && st.lunch > 0) ? "home" : "out");
-        setActiveBtn_("dinner", (st.dinner !== null && st.dinner > 0) ? "home" : "out");
-      }
-      return alert("保存に失敗: " + (res.error || "unknown"));
-    }
+    if (!res.ok) throw new Error(res.error || "save failed");
 
-    // 即反映：日 / summary
-    if (res.day){
+    // 成功したら、必要ならここで正規値に同期（dayだけでOK）
+    if (res.day) {
       calData[editingDate] = res.day;
       updateCalendarCell_(editingDate);
     }
-    if (res.summary){
-      if (totalMoney) totalMoney.textContent = fmtYen(res.summary.total);
-      if (monthDeltaEl) monthDeltaEl.textContent = fmtDelta(res.summary.monthDelta);
-      today = res.summary.today || today;
-      ym = res.summary.ym || ym;
-      updateHeader_();
-    }
 
-    if (todayStatusEl && monthCursor === today.slice(0,7)) todayStatusEl.textContent = todayStatusText_();
-
-    // グラフはまとめて更新
+    // summary/seriesは毎回即じゃなく、後でまとめて
+    scheduleSummaryRefresh_();
     scheduleSeriesRefresh_(currentRangeDays);
 
+  } catch (e){
+    // 失敗時だけ戻す
+    revertOptimistic_(meal);
+    alert("保存に失敗: " + (e?.message || e));
   } finally {
-    lunchHome.disabled = lunchOut.disabled = dinnerHome.disabled = dinnerOut.disabled = false;
+    inFlight.delete(key);
   }
+}
+
+function optimisticApply_(meal, mode){
+  const st = calData[editingDate] || { lunch:null, dinner:null, total:0 };
+  const prev = { ...st };
+
+  // 復元用に保持（失敗時 revert で使う）
+  window.__optimisticPrev = window.__optimisticPrev || {};
+  window.__optimisticPrev[`${editingDate}:${meal}`] = prev;
+
+  const amount = (mode==="home")
+    ? (meal==="lunch" ? clamp100(lunchBonusInput.value) : clamp100(dinnerBonusInput.value))
+    : 0;
+
+  if (meal==="lunch") st.lunch = amount;
+  else st.dinner = amount;
+
+  st.total = (typeof st.lunch==="number" ? st.lunch : 0) + (typeof st.dinner==="number" ? st.dinner : 0);
+  calData[editingDate] = st;
+
+  updateCalendarCell_(editingDate);
+
+  // 通算表示も“仮で”動かしたいならここで差分加算も可能（後述）
+}
+
+function revertOptimistic_(meal){
+  const key = `${editingDate}:${meal}`;
+  const prev = window.__optimisticPrev?.[key];
+  if (!prev) return;
+  calData[editingDate] = prev;
+  updateCalendarCell_(editingDate);
 }
 
 // ===== settings modal (local only) =====
