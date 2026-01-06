@@ -57,6 +57,9 @@ let calData = {};     // date -> { lunch, dinner, total }
 let currentRangeDays = 30;
 let seriesDebounceTimer = null;
 
+// summary debounce
+let summaryDebounceTimer = null;
+
 // ===== API =====
 async function apiGet(path, params={}){
   const url = new URL(GAS_WEBAPP_URL);
@@ -78,7 +81,7 @@ async function apiSetMeal({date, meal, mode, amount}) {
     url.searchParams.set("amount", String(amount));
   }
 
-  // ★ 追加：軽量モード
+  // ★ 軽量モード（GAS側が未対応でも無視されるだけでOK）
   url.searchParams.set("lite", "1");
 
   const res = await fetch(url.toString(), { method: "GET" });
@@ -266,7 +269,7 @@ function scheduleSeriesRefresh_(days){
   if (seriesDebounceTimer) clearTimeout(seriesDebounceTimer);
   seriesDebounceTimer = setTimeout(()=> {
     refreshSeries_(currentRangeDays).catch(()=>{});
-  }, 1500);
+  }, 800);
 }
 
 async function refreshSeries_(days){
@@ -372,39 +375,62 @@ function drawTrend_(series){
   ctx.fill();
 }
 
+// ===== summary debounce (FIX) =====
+function scheduleSummaryRefresh_(){
+  if (summaryDebounceTimer) clearTimeout(summaryDebounceTimer);
+  summaryDebounceTimer = setTimeout(async ()=>{
+    try{
+      await refreshSummary_();
+      // 今日の入力状況ラベルを更新
+      if (todayStatusEl){
+        if (monthCursor === today.slice(0,7)) todayStatusEl.textContent = todayStatusText_();
+        else todayStatusEl.textContent = "（今月カレンダー外）";
+      }
+    } catch(e){
+      console.warn("summary refresh failed:", e);
+    }
+  }, 300);
+}
+
 // ===== save (fast) =====
 const inFlight = new Set(); // グローバルに1回
 
 async function setMeal_(meal, mode){
   // UIは先に即反映
   setActiveBtn_(meal, mode);
-  optimisticApply_(meal, mode); // 後述：カレンダー数字も即反映
+  optimisticApply_(meal, mode);
 
   const key = `${editingDate}:${meal}`;
-  if (inFlight.has(key)) return;     // 連打は無視（ここが最重要）
+  if (inFlight.has(key)) return;
   inFlight.add(key);
 
   try{
-    // fetch は裏で。待ち時間はUI止めない
     const amount = (mode==="home")
-      ? (meal==="lunch" ? clamp100(lunchBonusInput.value) : clamp100(dinnerBonusInput.value))
+      ? (meal==="lunch" ? clamp100(lunchBonusInput?.value) : clamp100(dinnerBonusInput?.value))
       : 0;
 
     const res = await apiSetMeal({ date: editingDate, meal, mode, amount });
     if (!res.ok) throw new Error(res.error || "save failed");
 
-    // 成功したら、必要ならここで正規値に同期（dayだけでOK）
-    if (res.day) {
-      calData[editingDate] = res.day;
-      updateCalendarCell_(editingDate);
+    // ✅ GASの返り値が day / updated どっちでも拾う
+    // - lite版: { ok:true, day:{...} } を想定
+    // - 非lite/旧版: { ok:true, updated:{date,lunch,dinner,total}, summary:{...} } を想定
+    const day = res.day || res.updated;
+    if (day){
+      const d = day.date || editingDate;
+      calData[d] = {
+        lunch: (day.lunch === undefined ? (calData[d]?.lunch ?? null) : day.lunch),
+        dinner:(day.dinner=== undefined ? (calData[d]?.dinner?? null) : day.dinner),
+        total: (day.total === undefined ? ((Number(day.lunch||0)+Number(day.dinner||0))||0) : day.total),
+      };
+      updateCalendarCell_(d);
     }
 
-    // summary/seriesは毎回即じゃなく、後でまとめて
+    // summary/seriesは後でまとめて
     scheduleSummaryRefresh_();
     scheduleSeriesRefresh_(currentRangeDays);
 
   } catch (e){
-    // 失敗時だけ戻す
     revertOptimistic_(meal);
     alert("保存に失敗: " + (e?.message || e));
   } finally {
@@ -416,12 +442,11 @@ function optimisticApply_(meal, mode){
   const st = calData[editingDate] || { lunch:null, dinner:null, total:0 };
   const prev = { ...st };
 
-  // 復元用に保持（失敗時 revert で使う）
   window.__optimisticPrev = window.__optimisticPrev || {};
   window.__optimisticPrev[`${editingDate}:${meal}`] = prev;
 
   const amount = (mode==="home")
-    ? (meal==="lunch" ? clamp100(lunchBonusInput.value) : clamp100(dinnerBonusInput.value))
+    ? (meal==="lunch" ? clamp100(lunchBonusInput?.value) : clamp100(dinnerBonusInput?.value))
     : 0;
 
   if (meal==="lunch") st.lunch = amount;
@@ -431,8 +456,6 @@ function optimisticApply_(meal, mode){
   calData[editingDate] = st;
 
   updateCalendarCell_(editingDate);
-
-  // 通算表示も“仮で”動かしたいならここで差分加算も可能（後述）
 }
 
 function revertOptimistic_(meal){
@@ -463,12 +486,10 @@ function bindSettings_(){
   if (settingsOverlay) settingsOverlay.addEventListener("click", closeSettingsModal_);
 
   if (saveSettingsBtn) saveSettingsBtn.addEventListener("click", ()=>{
-    // 現在PIN（端末に保存）
     const p = pinInput ? String(pinInput.value || "") : "";
     PIN = p;
     localStorage.setItem("okozukai_pin", PIN);
 
-    // newPinInput は「将来GAS側で変更機能を付ける用」：今は端末保存のみ
     const np = newPinInput ? String(newPinInput.value || "") : "";
     if (np){
       PIN = np;
@@ -476,7 +497,6 @@ function bindSettings_(){
       if (pinInput) pinInput.value = PIN;
     }
 
-    // 金額の“端末デフォルト”も保存
     if (lunchBonusInput) localStorage.setItem("okozukai_lunch_default", String(clamp100(lunchBonusInput.value)));
     if (dinnerBonusInput) localStorage.setItem("okozukai_dinner_default", String(clamp100(dinnerBonusInput.value)));
 
@@ -520,36 +540,37 @@ function bind_(){
   if (dinnerHome)dinnerHome.addEventListener("click", ()=> setMeal_("dinner", "home"));
   if (dinnerOut) dinnerOut.addEventListener("click", ()=> setMeal_("dinner", "out"));
 
-  // 金額入力：100円単位に丸め＆「入力したら即保存」したいなら autoSave=true
+  // 金額入力：100円単位に丸め＆入力したら即保存
   const autoSave = true;
 
   if (lunchBonusInput){
     lunchBonusInput.addEventListener("change", ()=>{
       lunchBonusInput.value = String(clamp100(lunchBonusInput.value));
       localStorage.setItem("okozukai_lunch_default", lunchBonusInput.value);
-      if (autoSave) setMeal_("lunch", "home"); // 入力しただけで反映
+      if (autoSave) setMeal_("lunch", "home");
     });
   }
   if (dinnerBonusInput){
     dinnerBonusInput.addEventListener("change", ()=>{
       dinnerBonusInput.value = String(clamp100(dinnerBonusInput.value));
       localStorage.setItem("okozukai_dinner_default", dinnerBonusInput.value);
-      if (autoSave) setMeal_("dinner", "home"); // 入力しただけで反映
+      if (autoSave) setMeal_("dinner", "home");
     });
   }
 
   // 範囲ボタン（data-range）
-  rangeButtons.forEach(btn=>{
-    btn.addEventListener("click", ()=>{
-      const days = Number(btn.dataset.range);
-      currentRangeDays = days;
-      scheduleSeriesRefresh_(days);
+  if (rangeButtons && rangeButtons.length){
+    rangeButtons.forEach(btn=>{
+      btn.addEventListener("click", ()=>{
+        const days = Number(btn.dataset.range);
+        currentRangeDays = days;
+        scheduleSeriesRefresh_(days);
 
-      // 見た目 active（CSSある前提。なければ無視でOK）
-      rangeButtons.forEach(b=>b.classList.remove("active"));
-      btn.classList.add("active");
+        rangeButtons.forEach(b=>b.classList.remove("active"));
+        btn.classList.add("active");
+      });
     });
-  });
+  }
 
   bindSettings_();
 }
@@ -561,8 +582,6 @@ async function main(){
     return;
   }
 
-  // promptは出さない（歯車から変更できる）
-  // PIN未設定でもGAS側が許可なら動く
   if (!PIN) PIN = "";
 
   await refreshSummary_();
